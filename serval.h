@@ -151,7 +151,7 @@ extern const char version_servald[];
 #define DEFAULT_INSTANCE_PATH INSTANCE_PATH
 #else
 #ifdef ANDROID
-#define DEFAULT_INSTANCE_PATH "/data/data/org.servalproject/var/serval-node"
+#define DEFAULT_INSTANCE_PATH "/data/data/za.co.csir.walkiemesh/var/serval-node"
 #else
 #define DEFAULT_INSTANCE_PATH "/var/serval-node"
 #endif

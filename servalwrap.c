@@ -24,7 +24,7 @@ struct context;
 
 int main(int argc,char **argv)
 {
- void *h = dlopen("/data/data/org.servalproject/lib/libserval.so",RTLD_LAZY);
+ void *h = dlopen("/data/data/za.co.csir.walkiemesh/lib/libserval.so",RTLD_LAZY);
  if (!h)
    return fprintf(stderr, "Failed to load libserval.so");
 

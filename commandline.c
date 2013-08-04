@@ -120,19 +120,19 @@ int Throw(JNIEnv *env, const char *class, const char *msg)
   return -1;
 }
 
-/* JNI entry point to command line.  See org.servalproject.servald.ServalD class for the Java side.
+/* JNI entry point to command line.  See za.co.csir.walkiemesh.servald.ServalD class for the Java side.
    JNI method descriptor: "(Ljava/util/List;[Ljava/lang/String;)I"
 */
-JNIEXPORT jint JNICALL Java_org_servalproject_servald_ServalD_rawCommand(JNIEnv *env, jobject this, jobject outv, jobjectArray args)
+JNIEXPORT jint JNICALL Java_za_co_csir_walkiemesh_servald_ServalD_rawCommand(JNIEnv *env, jobject this, jobject outv, jobjectArray args)
 {
   struct cli_context context;
   bzero(&context, sizeof(context));
 
   // find jni results methods
   if (!IJniResults){
-    IJniResults = (*env)->FindClass(env, "org/servalproject/servald/IJniResults");
+    IJniResults = (*env)->FindClass(env, "za/co/csir/walkiemesh/servald/IJniResults");
     if (IJniResults==NULL)
-      return Throw(env, "java/lang/IllegalStateException", "Unable to locate class org.servalproject.servald.IJniResults");
+      return Throw(env, "java/lang/IllegalStateException", "Unable to locate class za.co.csir.walkiemesh.servald.IJniResults");
     startResultSet = (*env)->GetMethodID(env, IJniResults, "startResultSet", "(I)V");
     if (startResultSet==NULL)
       return Throw(env, "java/lang/IllegalStateException", "Unable to locate method startResultSet");
@@ -783,7 +783,7 @@ int app_server_start(const struct cli_parsed *parsed, struct cli_context *contex
 	      (void)close(fd);
 	    /* The execpath option is provided so that a JNI call to "start" can be made which
 	       creates a new server daemon process with the correct argv[0].  Otherwise, the servald
-	       process appears as a process with argv[0] = "org.servalproject". */
+	       process appears as a process with argv[0] = "za.co.csir.walkiemesh". */
 	    if (execpath) {
 	    /* Need the cast on Solaris because it defines NULL as 0L and gcc doesn't see it as a
 	       sentinal. */
