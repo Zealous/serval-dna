@@ -391,9 +391,7 @@ overlay_interface_init(const char *name, struct in_addr src_addr, struct in_addr
   interface->mtu=1200;
   interface->state=INTERFACE_STATE_DOWN;
   interface->alarm.poll.fd=0;
-  interface->debug = ifconfig->debug;
-  interface->point_to_point = ifconfig->point_to_point;
-
+  
   // How often do we announce ourselves on this interface?
   int tick_ms=-1;
   int packet_interval=-1;
@@ -470,15 +468,12 @@ overlay_interface_init(const char *name, struct in_addr src_addr, struct in_addr
     interface->address.sin_addr = src_addr;
     interface->broadcast_address.sin_addr = broadcast;
     interface->netmask = netmask;
-    interface->local_echo = 1;
     
     if (overlay_interface_init_socket(overlay_interface_count))
       return WHY("overlay_interface_init_socket() failed");
   }else{
     char read_file[1024];
     
-    interface->local_echo = interface->point_to_point?0:1;
-
     strbuf d = strbuf_local(read_file, sizeof read_file);
     strbuf_path_join(d, serval_instancepath(), config.server.interface_path, ifconfig->file, NULL);
     if (strbuf_overrun(d))
@@ -646,12 +641,9 @@ static void interface_read_file(struct overlay_interface *interface)
       
       if (config.debug.packetrx)
 	DEBUG_packet_visualise("Read from dummy interface", packet.payload, packet.payload_length);
-
-      if (should_drop(interface, packet.dst_addr) || (packet.pid == getpid() && !interface->local_echo)){
-	if (config.debug.packetrx)
-	  DEBUGF("Ignoring packet from %d, addressed to %s:%d", packet.pid,
-	      inet_ntoa(packet.dst_addr.sin_addr), ntohs(packet.dst_addr.sin_port));
-      }else{
+      
+      if (!should_drop(interface, packet.dst_addr)){
+	    
 	if (packetOkOverlay(interface, packet.payload, packet.payload_length, -1, 
 			    (struct sockaddr*)&packet.src_addr, sizeof(packet.src_addr))<0) {
 	  if (config.debug.rejecteddata) {
@@ -660,7 +652,8 @@ static void interface_read_file(struct overlay_interface *interface)
 	    dump("the malformed packet",packet.payload,packet.payload_length);
 	  }
 	}
-      }
+      }else if (config.debug.packetrx)
+	DEBUGF("Ignoring packet addressed to %s:%d", inet_ntoa(packet.dst_addr.sin_addr), ntohs(packet.dst_addr.sin_port));
     }
   }
   
@@ -829,9 +822,6 @@ overlay_broadcast_ensemble(overlay_interface *interface,
     return WHYF("Cannot send to interface %s as it is down", interface->name);
   }
 
-  if (interface->debug)
-    DEBUGF("Sending on %s, len %d: %s", interface->name, len, alloca_tohex(bytes, len>64?64:len));
-
   switch(interface->socket_type){
     case SOCK_STREAM:
     {
@@ -891,13 +881,13 @@ overlay_broadcast_ensemble(overlay_interface *interface,
 	if (fsize == -1)
 	  return WHY_perror("lseek");
 	if (config.debug.overlayinterfaces)
-	  DEBUGF("Write to interface %s at offset=%zu", interface->name, fsize);
+	  DEBUGF("Write to interface %s at offset=%d", interface->name, fsize);
       }
       ssize_t nwrite = write(interface->alarm.poll.fd, &packet, sizeof(packet));
       if (nwrite == -1)
 	return WHY_perror("write");
       if (nwrite != sizeof(packet))
-	return WHYF("only wrote %d of %d bytes", (int)nwrite, (int)sizeof(packet));
+	return WHYF("only wrote %lld of %lld bytes", nwrite, sizeof(packet));
       return 0;
     }
       
@@ -1084,7 +1074,7 @@ logServalPacket(int level, struct __sourceloc __whence, const char *message, con
   if (serval_packetvisualise(XPRINTF_MALLOCBUF(&mb), message, packet, len) == -1)
     WHY("serval_packetvisualise() failed");
   else if (mb.buffer == NULL)
-    WHYF("serval_packetvisualise() output buffer missing, message=%s packet=%p len=%lu", alloca_toprint(-1, message, strlen(message)), packet, (long unsigned int)len);
+    WHYF("serval_packetvisualise() output buffer missing, message=%s packet=%p len=%lu", alloca_toprint(-1, message, strlen(message)), packet, len);
   else
     logString(level, __whence, mb.buffer);
   if (mb.buffer)

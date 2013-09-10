@@ -62,8 +62,8 @@ int overlay_mdp_setup_sockets()
     /* XXX The 100 should be replaced with the actual maximum allowed.
        Apparently POSIX requires it to be at least 100, but I would still feel
        more comfortable with using the appropriate constant. */
-    if (!form_serval_instance_path(&name.sun_path[0], sizeof name.sun_path, "mdp.socket"))
-      return WHY("Cannot construct name of unix domain socket.");
+    snprintf(&name.sun_path[1],100,
+	     confValueGet("mdp.socket",DEFAULT_MDP_SOCKET_NAME));
     len = 1+strlen(&name.sun_path[1]) + sizeof(name.sun_family);
     
     mdp_abstract.poll.fd = socket(AF_UNIX, SOCK_DGRAM, 0);
@@ -561,9 +561,6 @@ int overlay_mdp_dispatch(overlay_mdp_frame *mdp,int userGeneratedFrameP,
 			 struct sockaddr_un *recvaddr,int recvaddrlen)
 {
   IN();
-
-  if (mdp->out.payload_length > sizeof(mdp->out.payload))
-    FATAL("Payload length is past the end of the buffer");
 
   /* Prepare the overlay frame for dispatch */
   struct overlay_frame *frame = calloc(1,sizeof(struct overlay_frame));

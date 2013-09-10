@@ -28,8 +28,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define MSG_TYPE_BARS 0
 #define MSG_TYPE_REQ 1
 
-#define CACHE_BARS 60
-#define BARS_PER_RESPONSE ((int)400/RHIZOME_BAR_BYTES)
+#define CACHE_BARS 20
 
 #define HEAD_FLAG INT64_MAX
 
@@ -46,13 +45,10 @@ struct rhizome_sync
   uint64_t sync_end;
   uint64_t highest_seen;
   unsigned char sync_complete;
-  int bar_count;
-  time_ms_t next_request;
-  time_ms_t last_extended;
-  time_ms_t last_response;
-  time_ms_t last_new_bundle;
   // a short list of BAR's we are interested in from the last parsed message
   struct bar_entry bars[CACHE_BARS];
+  int bar_count;
+  time_ms_t next_request;
 };
 
 static void rhizome_sync_request(struct subscriber *subscriber, uint64_t token, unsigned char forwards)
@@ -74,14 +70,14 @@ static void rhizome_sync_request(struct subscriber *subscriber, uint64_t token, 
 
   mdp.out.payload_length = ob_position(b);
   if (config.debug.rhizome)
-    DEBUGF("Sending request to %s for BARs from %"PRIu64" %s", alloca_tohex_sid(subscriber->sid), token, forwards?"forwards":"backwards");
+    DEBUGF("Sending request to %s for BARs from %lld %s", alloca_tohex_sid(subscriber->sid), token, forwards?"forwards":"backwards");
   overlay_mdp_dispatch(&mdp,0,NULL,0);
   ob_free(b);
 }
 
 static void rhizome_sync_send_requests(struct subscriber *subscriber, struct rhizome_sync *state)
 {
-  int i, requests=0;
+  int i;
   time_ms_t now = gettime_ms();
 
   // send requests for manifests that we have room to fetch
@@ -92,11 +88,6 @@ static void rhizome_sync_send_requests(struct subscriber *subscriber, struct rhi
     if (state->bars[i].next_request > now)
       continue;
 
-    unsigned char *prefix = &state->bars[i].bar[RHIZOME_BAR_PREFIX_OFFSET];
-
-    if (rhizome_ignore_manifest_check(prefix, RHIZOME_BAR_PREFIX_BYTES))
-      continue;
-
     // do we have free space now in the appropriate fetch queue?
     unsigned char log2_size = state->bars[i].bar[RHIZOME_BAR_FILESIZE_OFFSET];
     if (log2_size!=0xFF && rhizome_fetch_has_queue_space(log2_size)!=1)
@@ -104,7 +95,7 @@ static void rhizome_sync_send_requests(struct subscriber *subscriber, struct rhi
 
     int64_t version = rhizome_bar_version(state->bars[i].bar);
     // are we already fetching this bundle [or later]?
-    rhizome_manifest *m=rhizome_fetch_search(prefix, RHIZOME_BAR_PREFIX_BYTES);
+    rhizome_manifest *m=rhizome_fetch_search(&state->bars[i].bar[RHIZOME_BAR_PREFIX_OFFSET], RHIZOME_BAR_PREFIX_BYTES);
     if (m && m->version >= version)
       continue;
 
@@ -113,20 +104,20 @@ static void rhizome_sync_send_requests(struct subscriber *subscriber, struct rhi
       mdp.out.src.port=MDP_PORT_RHIZOME_RESPONSE;
       bcopy(subscriber->sid,mdp.out.dst.sid,SID_SIZE);
       mdp.out.dst.port=MDP_PORT_RHIZOME_MANIFEST_REQUEST;
+      if (subscriber->reachable&REACHABLE_DIRECT)
+        mdp.out.ttl=1;
+      else
+        mdp.out.ttl=64;
       mdp.packetTypeAndFlags=MDP_TX;
 
       mdp.out.queue=OQ_OPPORTUNISTIC;
     }
-    if (mdp.out.payload_length + RHIZOME_BAR_BYTES>MDP_MTU)
-      break;
     if (config.debug.rhizome)
       DEBUGF("Requesting manifest for BAR %s", alloca_tohex(state->bars[i].bar, RHIZOME_BAR_BYTES));
     bcopy(state->bars[i].bar, &mdp.out.payload[mdp.out.payload_length], RHIZOME_BAR_BYTES);
     mdp.out.payload_length+=RHIZOME_BAR_BYTES;
+
     state->bars[i].next_request = now+1000;
-    requests++;
-    if (requests>=BARS_PER_RESPONSE)
-      break;
   }
   if (mdp.out.payload_length!=0)
     overlay_mdp_dispatch(&mdp,0,NULL,0);
@@ -135,7 +126,7 @@ static void rhizome_sync_send_requests(struct subscriber *subscriber, struct rhi
   if (state->bar_count >= CACHE_BARS)
     return;
 
-  if (state->next_request<=now){
+  if (state->next_request<=gettime_ms()){
     if (state->sync_end < state->highest_seen){
       rhizome_sync_request(subscriber, state->sync_end, 1);
     }else if(state->sync_start >0){
@@ -145,7 +136,7 @@ static void rhizome_sync_send_requests(struct subscriber *subscriber, struct rhi
       if (config.debug.rhizome)
         DEBUGF("BAR sync with %s complete", alloca_tohex_sid(subscriber->sid));
     }
-    state->next_request = now+5000;
+    state->next_request = gettime_ms()+500;
   }
 }
 
@@ -184,44 +175,31 @@ int rhizome_sync_bundle_inserted(const unsigned char *bar)
   return 0;
 }
 
-static int sync_cache_bar(struct rhizome_sync *state, unsigned char *bar, uint64_t token)
+static void sync_cache_bar(struct rhizome_sync *state, unsigned char *bar, uint64_t token)
 {
-  int ret=0;
-  if (state->bar_count>=CACHE_BARS)
-    return 0;
   // check the database before adding the BAR to the list
   if (token!=0 && rhizome_is_bar_interesting(bar)!=0){
     bcopy(bar, state->bars[state->bar_count].bar, RHIZOME_BAR_BYTES);
     state->bars[state->bar_count].next_request = gettime_ms();
     state->bar_count++;
-    ret=1;
   }
-  if (state->sync_end < token){
+  if (state->sync_end < token)
     state->sync_end = token;
-    state->last_extended = gettime_ms();
-    ret=1;
-  }
-  if (state->sync_start > token){
+  if (state->sync_start > token)
     state->sync_start = token;
-    state->last_extended = gettime_ms();
-    ret=1;
-  }
-  return ret;
 }
 
 static void sync_process_bar_list(struct subscriber *subscriber, struct rhizome_sync *state, struct overlay_buffer *b)
 {
   // find all interesting BARs in the payload and extend our sync range
 
-  unsigned char *bars[BARS_PER_RESPONSE];
-  uint64_t bar_tokens[BARS_PER_RESPONSE];
+  unsigned char *bars[CACHE_BARS];
+  uint64_t bar_tokens[CACHE_BARS];
   int bar_count = 0;
   int has_before=0, has_after=0;
   int mid_point = -1;
 
-  state->last_response = gettime_ms();
-
-  while(ob_remaining(b)>0 && bar_count < BARS_PER_RESPONSE){
+  while(ob_remaining(b)>0 && bar_count < CACHE_BARS){
     bar_tokens[bar_count]=ob_get_packed_ui64(b);
     bars[bar_count]=ob_get_bytes_ptr(b, RHIZOME_BAR_BYTES);
     if (!bars[bar_count])
@@ -234,7 +212,6 @@ static void sync_process_bar_list(struct subscriber *subscriber, struct rhizome_
     // track the highest BAR we've seen, even if we can't sync it yet, so we know what BARs to request.
     if (state->highest_seen < bar_tokens[bar_count]){
       state->highest_seen = bar_tokens[bar_count];
-      state->last_new_bundle = gettime_ms();
       state->sync_complete = 0;
     }
 
@@ -272,19 +249,13 @@ static void sync_process_bar_list(struct subscriber *subscriber, struct rhizome_
     // extend the set of BARs we have synced from this peer
     // we require the list of BARs to be either ASC or DESC and include BARs for *all* manifests in that range
     // TODO stop if we are taking too much CPU time.
-    int added=0;
-    for (i=mid_point; i<bar_count; i++){
-      if (sync_cache_bar(state, bars[i], bar_tokens[i]))
-	added=1;
-    }
-    for (i=mid_point -1; i>=0; i--){
-      if (sync_cache_bar(state, bars[i], bar_tokens[i]))
-	added=1;
-    }
+    for (i=mid_point; i<bar_count && state->bar_count < CACHE_BARS; i++)
+      sync_cache_bar(state, bars[i], bar_tokens[i]);
+    for (i=mid_point -1; i>=0 && state->bar_count < CACHE_BARS; i--)
+      sync_cache_bar(state, bars[i], bar_tokens[i]);
     if (config.debug.rhizome)
-      DEBUGF("Synced %"PRIu64" - %"PRIu64" with %s", state->sync_start, state->sync_end, alloca_tohex_sid(subscriber->sid));
-    if (added)
-      state->next_request = gettime_ms();
+      DEBUGF("Synced %llu - %llu with %s", state->sync_start, state->sync_end, alloca_tohex_sid(subscriber->sid));
+    state->next_request = gettime_ms();
   }
 
 }
@@ -302,11 +273,11 @@ static int append_response(struct overlay_buffer *b, uint64_t token, const unsig
       return -1;
     bzero(ptr, RHIZOME_BAR_BYTES);
   }
-  ob_checkpoint(b);
   return 0;
 }
 
 static uint64_t max_token=0;
+
 static void sync_send_response(struct subscriber *dest, int forwards, uint64_t token)
 {
   IN();
@@ -326,12 +297,13 @@ static void sync_send_response(struct subscriber *dest, int forwards, uint64_t t
     mdp.packetTypeAndFlags|=(MDP_NOCRYPT|MDP_NOSIGN);
   }
 
-  if (!dest)
+  if (!dest || dest->reachable&REACHABLE_DIRECT)
     mdp.out.ttl=1;
+  else
+    mdp.out.ttl=64;
 
   struct overlay_buffer *b = ob_static(mdp.out.payload, sizeof(mdp.out.payload));
   ob_append_byte(b, MSG_TYPE_BARS);
-  ob_checkpoint(b);
 
   sqlite_retry_state retry = SQLITE_RETRY_STATE_DEFAULT;
   sqlite3_stmt *statement;
@@ -361,29 +333,23 @@ static void sync_send_response(struct subscriber *dest, int forwards, uint64_t t
       rhizome_sync_bundle_inserted(bar);
     }
 
-    if (count < BARS_PER_RESPONSE){
+    if (count < CACHE_BARS){
       // make sure we include the exact rowid that was requested, even if we just deleted / replaced the manifest
       if (count==0 && rowid!=token){
         if (token!=HEAD_FLAG){
-          if (append_response(b, token, NULL))
-	    ob_rewind(b);
-	  else{
-            count++;
-            last = token;
-	  }
+          append_response(b, token, NULL);
+          count++;
+          last = token;
         }else
           token = rowid;
       }
 
-      if (append_response(b, rowid, bar))
-	ob_rewind(b);
-      else {
-        last = rowid;
-        count++;
-      }
+      append_response(b, rowid, bar);
+      last = rowid;
+      count++;
     }
 
-    if (count >= BARS_PER_RESPONSE && rowid <= max_token)
+    if (count >=CACHE_BARS && rowid <= max_token)
       break;
   }
 
@@ -391,13 +357,10 @@ static void sync_send_response(struct subscriber *dest, int forwards, uint64_t t
     max_token = token;
 
   // send a zero lower bound if we reached the end of our manifest list
-  if (count && count < BARS_PER_RESPONSE && !forwards){
-    if (append_response(b, 0, NULL))
-      ob_rewind(b);
-    else {
-      last = 0;
-      count++;
-    }
+  if (count && count < CACHE_BARS && !forwards){
+    append_response(b, 0, NULL);
+    last = 0;
+    count++;
   }
 
   sqlite3_finalize(statement);
@@ -405,7 +368,7 @@ static void sync_send_response(struct subscriber *dest, int forwards, uint64_t t
   if (count){
     mdp.out.payload_length = ob_position(b);
     if (config.debug.rhizome)
-      DEBUGF("Sending %d BARs from %"PRIu64" to %"PRIu64, count, token, last);
+      DEBUGF("Sending %d BARs from %llu to %llu", count, token, last);
     overlay_mdp_dispatch(&mdp,0,NULL,0);
   }
   ob_free(b);
