@@ -33,10 +33,10 @@ setup() {
 compile_java_classes() {
    assert --message='Java compiler was detected by ./configure' [ "$JAVAC" ]
    mkdir classes
-   assert $JAVAC -Xlint:unchecked -d classes "$servald_source_root"/java/org/servalproject/servald/*.java
-   assert [ -r classes/org/servalproject/servald/ServalD.class ]
-   assert [ -r classes/org/servalproject/servald/IJniResults.class ]
-   assert [ -r classes/org/servalproject/servald/ServalDTests.class ]
+   assert $JAVAC -Xlint:unchecked -d classes "$servald_source_root"/java/za/co/csir/walkiemesh/servald/*.java
+   assert [ -r classes/za/co/csir/walkiemesh/servald/ServalD.class ]
+   assert [ -r classes/za/co/csir/walkiemesh/servald/IJniResults.class ]
+   assert [ -r classes/za/co/csir/walkiemesh/servald/ServalDTests.class ]
 }
 
 # Make sure that the normal echo command-line works, without JNI.
@@ -47,7 +47,7 @@ assert_echo_works() {
 
 doc_Echo="Serval JNI echo Hello world"
 test_Echo() {
-   executeOk java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" org.servalproject.servald.ServalD 'echo' '-e' 'Hello,\ttab' 'world\0!'
+   executeOk java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" za.co.csir.walkiemesh.servald.ServalD 'echo' '-e' 'Hello,\ttab' 'world\0!'
    assertStdoutIs -e 'Hello,\ttab\nworld\0!\n'
 }
 
@@ -64,14 +64,14 @@ test_Delim() {
 
 doc_Repeat="Serval JNI repeated calls in same process"
 test_Repeat() {
-   executeOk --core-backtrace java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" org.servalproject.servald.ServalDTests repeat 50 'echo' 'Hello,' 'world!'
+   executeOk --core-backtrace java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" za.co.csir.walkiemesh.servald.ServalDTests repeat 50 'echo' 'Hello,' 'world!'
    assertStdoutLineCount '==' 50
    assertStdoutGrep --matches=50 '^0:Hello,:world!$'
 }
 
 doc_NullArg="Serval JNI null arguments throw exception"
 test_NullArg() {
-   execute --core-backtrace java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" org.servalproject.servald.ServalDTests nullArg 'echo' '(null)'
+   execute --core-backtrace java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" za.co.csir.walkiemesh.servald.ServalDTests nullArg 'echo' '(null)'
    tfw_cat --stdout --stderr
    assertExitStatus '!=' 0
    assertStderrGrep 'NullPointerException: null element in argv'
@@ -79,7 +79,7 @@ test_NullArg() {
 
 doc_help="Serval JNI returns help text"
 test_help() {
-   execute --core-backtrace java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" org.servalproject.servald.ServalD 'help'
+   execute --core-backtrace java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" za.co.csir.walkiemesh.servald.ServalD 'help'
    tfw_cat --stdout --stderr
    assertExitStatus '==' 0
    assertStdoutGrep 'Serval DNA version '
