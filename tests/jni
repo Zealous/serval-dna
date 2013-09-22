@@ -77,13 +77,5 @@ test_NullArg() {
    assertStderrGrep 'NullPointerException: null element in argv'
 }
 
-doc_help="Serval JNI returns help text"
-test_help() {
-   execute --core-backtrace java "-Djava.library.path=$LD_LIBRARY_PATH" -classpath "$PWD/classes" za.co.csir.walkiemesh.servald.ServalD 'help'
-   tfw_cat --stdout --stderr
-   assertExitStatus '==' 0
-   assertStdoutGrep 'Serval DNA version '
-}
-
 
 runTests "$@"

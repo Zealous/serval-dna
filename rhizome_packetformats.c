@@ -33,7 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 /* Android doesn't have log2(), and we don't really need to do floating point
    math to work out how big a file is.
  */
-int log2ll(uint64_t x)
+int log2ll(unsigned long long x)
 {
   unsigned char lookup[16]={0,1,2,2,3,3,3,3,4,4,4,4,4,4,4,4};
   int v=-1;
@@ -125,16 +125,16 @@ int64_t rhizome_bar_version(const unsigned char *bar)
 
 /* This function only displays the first 8 bytes, and should not be used
    for comparison. */
-uint64_t rhizome_bar_bidprefix_ll(unsigned char *bar)
+unsigned long long rhizome_bar_bidprefix_ll(unsigned char *bar)
 {
-  uint64_t bidprefix=0;
+  long long bidprefix=0;
   int i;
   for(i=0;i<8;i++) 
-    bidprefix|=((uint64_t)bar[RHIZOME_BAR_PREFIX_OFFSET+7-i])<<(8*i);
+    bidprefix|=((unsigned long long)bar[RHIZOME_BAR_PREFIX_OFFSET+7-i])<<(8*i);
   return bidprefix;
 }
 
-static int append_bars(struct overlay_buffer *e, sqlite_retry_state *retry, const char *sql, int64_t *last_rowid){
+static int append_bars(struct overlay_buffer *e, sqlite_retry_state *retry, const char *sql, long long *last_rowid){
   int count=0;
   
   sqlite3_stmt *statement=sqlite_prepare(retry, sql, *last_rowid);
@@ -172,7 +172,7 @@ static int append_bars(struct overlay_buffer *e, sqlite_retry_state *retry, cons
 /* Periodically queue BAR advertisements
  Always advertise the most recent 3 manifests in the table, cycle through the rest of the table, adding 17 BAR's at a time
  */
-int64_t bundles_available=0;
+long long bundles_available=0;
 void overlay_rhizome_advertise(struct sched_ent *alarm){
   bundles_available=0;
   static int64_t bundle_last_rowid=INT64_MAX;
@@ -207,7 +207,7 @@ void overlay_rhizome_advertise(struct sched_ent *alarm){
   ob_append_byte(frame->payload, 2);
   ob_append_ui16(frame->payload, rhizome_http_server_port);
   
-  int64_t rowid=0;
+  long long rowid=0;
   int count = append_bars(frame->payload, &retry, 
 			  "SELECT BAR,ROWID FROM MANIFESTS ORDER BY ROWID DESC LIMIT 3", 
 			  &rowid);
@@ -233,9 +233,6 @@ end:
   schedule(alarm);
 }
 
-#define HAS_PORT (1<<1)
-#define HAS_MANIFESTS (1<<0)
-
 /* Queue an advertisment for a single manifest */
 int rhizome_advertise_manifest(rhizome_manifest *m){
   struct overlay_frame *frame = malloc(sizeof(struct overlay_frame));
@@ -247,7 +244,7 @@ int rhizome_advertise_manifest(rhizome_manifest *m){
   frame->payload = ob_new();
   ob_limitsize(frame->payload, 800);
   
-  if (ob_append_byte(frame->payload, HAS_PORT|HAS_MANIFESTS)) goto error;
+  if (ob_append_byte(frame->payload, 3)) goto error;
   if (ob_append_ui16(frame->payload, is_rhizome_http_enabled()?rhizome_http_server_port:0)) goto error;
   if (ob_append_ui16(frame->payload, m->manifest_all_bytes)) goto error;
   if (ob_append_bytes(frame->payload, m->manifestdata, m->manifest_all_bytes)) goto error;
@@ -276,14 +273,15 @@ int overlay_rhizome_saw_advertisements(int i, struct overlay_frame *f, long long
   httpaddr.sin_port = htons(RHIZOME_HTTP_PORT);
   int manifest_length;
   rhizome_manifest *m=NULL;
+  char httpaddrtxt[INET_ADDRSTRLEN];
 
   int (*oldfunc)() = sqlite_set_tracefunc(is_debug_rhizome_ads);
 
-  if (ad_frame_type & HAS_PORT){
+  if (ad_frame_type & 2){
     httpaddr.sin_port = htons(ob_get_ui16(f->payload));
   }
   
-  if (ad_frame_type & HAS_MANIFESTS){
+  if (ad_frame_type & 1){
     /* Extract whole manifests */
     while(f->payload->position < f->payload->sizeLimit) {
       if (ob_getbyte(f->payload, f->payload->position)==0xff){
@@ -296,6 +294,7 @@ int overlay_rhizome_saw_advertisements(int i, struct overlay_frame *f, long long
       
       unsigned char *data = ob_get_bytes_ptr(f->payload, manifest_length);
       if (!data) {
+	assert(inet_ntop(AF_INET, &httpaddr.sin_addr, httpaddrtxt, sizeof(httpaddrtxt)) != NULL);
 	WHYF("Illegal manifest length field in rhizome advertisement frame %d vs %d.", 
 	     manifest_length, f->payload->sizeLimit - f->payload->position);
 	break;
@@ -311,28 +310,31 @@ int overlay_rhizome_saw_advertisements(int i, struct overlay_frame *f, long long
       m = rhizome_new_manifest();
       if (!m) {
 	WHY("Out of manifests");
-	goto next;
+	sqlite_set_tracefunc(oldfunc);
+	RETURN(0);
       }
       
       if (rhizome_read_manifest_file(m, (char *)data, manifest_length) == -1) {
-	WHY("Error parsing manifest body");
-	goto next;
+	WHY("Error importing manifest body");
+	rhizome_manifest_free(m);
+	sqlite_set_tracefunc(oldfunc);
+	RETURN(0);
       }
       
       char manifest_id_prefix[RHIZOME_MANIFEST_ID_STRLEN + 1];
       if (rhizome_manifest_get(m, "id", manifest_id_prefix, sizeof manifest_id_prefix) == NULL) {
 	WHY("Manifest does not contain 'id' field");
-	goto next;
+	rhizome_manifest_free(m);
+	sqlite_set_tracefunc(oldfunc);
+	RETURN(0);
       }
-
-      /* trim manifest ID to a prefix for ease of debugging
+      /* trim manifest ID to a prefix for ease of debugging 
 	 (that is the only use of this */
+      manifest_id_prefix[8]=0; 
       if (config.debug.rhizome_ads){
-        manifest_id_prefix[8]=0;
 	long long version = rhizome_manifest_get_ll(m, "version");
 	DEBUGF("manifest id=%s* version=%lld", manifest_id_prefix, version);
       }
-
       /* Crude signature presence test */
       for(i=m->manifest_all_bytes-1;i>0;i--)
 	if (!m->manifestdata[i]) {
@@ -342,46 +344,42 @@ int overlay_rhizome_saw_advertisements(int i, struct overlay_frame *f, long long
       if (!i) {
 	/* ignore the announcement, but don't ignore other people
 	   offering the same manifest */
-	if (config.debug.rhizome_ads)
-	  DEBUG("Ignoring manifest announcment with no signature");
-	goto next;
+	WARN("Ignoring manifest announcment with no signature");
+	rhizome_manifest_free(m);
+	sqlite_set_tracefunc(oldfunc);
+	RETURN(0);
       }
-
+      
       if (rhizome_ignore_manifest_check(m->cryptoSignPublic,
-					crypto_sign_edwards25519sha512batch_PUBLICKEYBYTES)){
-	/* Ignoring manifest that has caused us problems recently */
-	if (config.debug.rhizome_ads)
-	  DEBUGF("Ignoring manifest with errors: %s*", manifest_id_prefix);
-	goto next;
-      }
-
-      if (m->errors > 0){
-	if (config.debug.rhizome_ads)
-	  DEBUG("Unverified manifest has errors - so not processing any further.");
-	/* Don't waste any time on this manifest in future attempts for at least
+					crypto_sign_edwards25519sha512batch_PUBLICKEYBYTES))
+	{
+	  /* Ignoring manifest that has caused us problems recently */
+	  if (1) WARNF("Ignoring manifest with errors: %s*", manifest_id_prefix);
+	}
+      else if (m->errors == 0)
+	{
+	  /* Manifest is okay, so see if it is worth storing */
+	  if (rhizome_manifest_version_cache_lookup(m)) {
+	    /* We already have this version or newer */
+	    if (config.debug.rhizome_ads)
+	      DEBUG("We already have that manifest or newer.");
+	  } else {
+	    if (config.debug.rhizome_ads)
+	      DEBUG("Not seen before.");
+	    rhizome_suggest_queue_manifest_import(m, &httpaddr,f->source->sid);
+	    // the above function will free the manifest structure, make sure we don't free it again
+	    m=NULL;
+	  }
+	}
+      else
+	{
+	  if (config.debug.rhizome_ads)
+	    DEBUG("Unverified manifest has errors - so not processing any further.");
+	  /* Don't waste any time on this manifest in future attempts for at least
 	     a minute. */
-	rhizome_queue_ignore_manifest(m->cryptoSignPublic,
+	  rhizome_queue_ignore_manifest(m->cryptoSignPublic,
 					crypto_sign_edwards25519sha512batch_PUBLICKEYBYTES, 60000);
-	goto next;
-      }
-
-      /* Manifest is okay, so see if it is worth storing */
-      if (rhizome_manifest_version_cache_lookup(m)) {
-	/* We already have this version or newer */
-	if (config.debug.rhizome_ads)
-	  DEBUG("We already have that manifest or newer.");
-	goto next;
-      }
-
-      if (config.debug.rhizome_ads)
-	DEBUG("Not seen before.");
-
-      // start the fetch process!
-      rhizome_suggest_queue_manifest_import(m, &httpaddr,f->source->sid);
-      // the above function will free the manifest structure, make sure we don't free it again
-      m=NULL;
-
-next:
+	}
       if (m) {
 	rhizome_manifest_free(m);
 	m = NULL;
@@ -391,7 +389,7 @@ next:
 
   // if we're using the new sync protocol, ignore the rest of the packet
   if (f->source->sync_state)
-    goto end;
+    RETURN(0);
 
   overlay_mdp_frame mdp;
   
@@ -473,7 +471,6 @@ next:
   if (mdp.out.payload_length>0)
     overlay_mdp_dispatch(&mdp,0 /* system generated */,NULL,0);
 
-end:
   sqlite_set_tracefunc(oldfunc);
   RETURN(0);
   OUT();

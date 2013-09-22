@@ -2,6 +2,7 @@
 
 SERVAL_BASE=serval-dna/
 include jni/serval-dna/sourcefiles.mk
+include jni/serval-dna/androidonlysources.mk
 SERVALD_SRC_FILES = $(SERVAL_SOURCES) $(ANDROIDONLY_SOURCES)
 
 SERVALD_LOCAL_CFLAGS = \

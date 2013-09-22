@@ -30,8 +30,8 @@ setup_interfaces() {
    >$TFWTMP/dummy
    executeOk_servald config \
       set interfaces "+>$TFWTMP/dummy" \
-      set monitor.socket "za.co.csir.walkiemesh.servald.monitor.socket.$TFWUNIQUE.$instance_name" \
-      set mdp.socket "za.co.csir.walkiemesh.servald.mdp.socket.$TFWUNIQUE.$instance_name"
+      set monitor.socket "org.servalproject.servald.monitor.socket.$TFWUNIQUE.$instance_name" \
+      set mdp.socket "org.servalproject.servald.mdp.socket.$TFWUNIQUE.$instance_name"
 }
 
 teardown() {

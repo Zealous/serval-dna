@@ -403,13 +403,6 @@ typedef struct overlay_interface {
   char prefer_unicast;
   // can we use this interface for routes to addresses in other subnets?
   int default_route;
-  // should we log more debug info on this interace? eg hex dumps of packets
-  char debug;
-  char local_echo;
-
-  // can we assume there will only be two devices on this interface?
-  char point_to_point;
-  struct subscriber *other_device;
   
   /* Number of milli-seconds per tick for this interface, which is basically related to the     
    the typical TX range divided by the maximum expected speed of nodes in the network.
@@ -520,6 +513,7 @@ time_ms_t overlay_time_until_next_tick();
 
 int overlay_frame_append_payload(struct decode_context *context, overlay_interface *interface, 
 				 struct overlay_frame *p, struct overlay_buffer *b);
+int single_packet_encapsulation(struct overlay_buffer *b, struct overlay_frame *frame);
 int overlay_packet_init_header(int packet_version, int encapsulation, 
 			       struct decode_context *context, struct overlay_buffer *buff, 
 			       struct subscriber *destination, 
@@ -554,7 +548,7 @@ int serval_packetvisualise(XPRINTF xpf, const char *message, const unsigned char
 int rhizome_fetching_get_fds(struct pollfd *fds,int *fdcount,int fdmax);
 int rhizome_opendb();
 
-int parseCommandLine(struct cli_context *context, const char *argv0, int argc, const char *const *argv);
+int parseCommandLine(const char *argv0, int argc, const char *const *argv);
 
 int overlay_mdp_get_fds(struct pollfd *fds,int *fdcount,int fdmax);
 int overlay_mdp_reply_error(int sock,
@@ -647,6 +641,17 @@ int vomp_received_audio(struct vomp_call_state *call, int audio_codec, int time,
 			const unsigned char *audio, int audio_length);
 void monitor_get_all_supported_codecs(unsigned char *codecs);
 
+int cli_putchar(char c);
+int cli_puts(const char *str);
+int cli_printf(const char *fmt, ...);
+int cli_delim(const char *opt);
+void cli_columns(int columns, const char *names[]);
+void cli_row_count(int rows);
+void cli_field_name(const char *name, const char *delim);
+void cli_put_long(int64_t value, const char *delim);
+void cli_put_string(const char *value, const char *delim);
+void cli_put_hexvalue(const unsigned char *value, int length, const char *delim);
+
 int overlay_mdp_getmyaddr(unsigned index, sid_t *sid);
 int overlay_mdp_bind(const sid_t *localaddr, int port) ;
 int overlay_route_node_info(overlay_mdp_nodeinfo *node_info);
@@ -666,10 +671,13 @@ int directory_registration();
 int directory_service_init();
 
 struct cli_parsed;
-int app_nonce_test(const struct cli_parsed *parsed, struct cli_context *context);
-int app_rhizome_direct_sync(const struct cli_parsed *parsed, struct cli_context *context);
-int app_monitor_cli(const struct cli_parsed *parsed, struct cli_context *context);
-int app_vomp_console(const struct cli_parsed *parsed, struct cli_context *context);
+int app_nonce_test(const struct cli_parsed *parsed, void *context);
+int app_rhizome_direct_sync(const struct cli_parsed *parsed, void *context);
+#ifdef HAVE_VOIPTEST
+int app_pa_phone(const struct cli_parsed *parsed, void *context);
+#endif
+int app_monitor_cli(const struct cli_parsed *parsed, void *context);
+int app_vomp_console(const struct cli_parsed *parsed, void *context);
 
 int monitor_get_fds(struct pollfd *fds,int *fdcount,int fdmax);
 
@@ -782,10 +790,11 @@ int fd_showstats();
 int fd_checkalarms();
 int fd_func_enter(struct __sourceloc __whence, struct call_stats *this_call);
 int fd_func_exit(struct __sourceloc __whence, struct call_stats *this_call);
-void dump_stack(int log_level);
+void dump_stack();
 
 #define IN() static struct profile_total _aggregate_stats={NULL,0,__FUNCTION__,0,0,0}; \
-    struct call_stats _this_call={.totals=&_aggregate_stats}; \
+    struct call_stats _this_call; \
+    _this_call.totals=&_aggregate_stats; \
     fd_func_enter(__HERE__, &_this_call);
 
 #define OUT() fd_func_exit(__HERE__, &_this_call)
@@ -810,10 +819,9 @@ uint32_t Crc32_ComputeBuf( uint32_t inCrc32, const void *buf,
 			  size_t bufLen );
 extern int last_radio_rssi;
 extern int last_radio_temperature;
-extern int last_radio_rxpackets;
 int rhizome_active_fetch_count();
 int rhizome_active_fetch_bytes_received(int q);
-extern int64_t bundles_available;
+extern long long bundles_available;
 extern char crash_handler_clue[1024];
 
 
@@ -824,7 +832,7 @@ void link_explained(struct subscriber *subscriber);
 void link_interface_down(struct overlay_interface *interface);
 int link_state_announce_links();
 int link_state_legacy_ack(struct overlay_frame *frame, time_ms_t now);
-int link_state_interface_oldest_neighbour(struct overlay_interface *interface);
+int link_state_interface_has_neighbour(struct overlay_interface *interface);
 int link_state_ack_soon(struct subscriber *sender);
 int link_state_should_forward_broadcast(struct subscriber *transmitter);
 

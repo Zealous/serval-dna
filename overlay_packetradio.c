@@ -28,7 +28,9 @@ int overlay_packetradio_setup_port(overlay_interface *interface)
   case 38400: baud_rate = B38400; break;
   default:
   case 57600: baud_rate = B57600; break;
-  case 115200: baud_rate = B115200; break;
+#ifdef B11520
+  case 115200: baud_rate = B11520; break;
+#endif
   case 230400: baud_rate = B230400; break;
   }
 
@@ -70,9 +72,7 @@ int overlay_packetradio_setup_port(overlay_interface *interface)
   
   // Ask radio to report RSSI
   (void)write_all(interface->alarm.poll.fd,"\r",1);
-  usleep(600000);
-  (void)write_all(interface->alarm.poll.fd,"\r",1);
-  usleep(600000);
+  usleep(1200000);
   (void)write_all(interface->alarm.poll.fd,"+++",3);
   usleep(1200000);
   (void)write_all(interface->alarm.poll.fd,"\rAT&T\rAT&T=RSSI\rATO\r",20);

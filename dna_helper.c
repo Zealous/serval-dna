@@ -582,7 +582,7 @@ dna_helper_enqueue(overlay_mdp_frame *mdp, const char *did, const unsigned char 
     return 0;
   }
   if (awaiting_reply) {
-    WARN("DNAHELPER currently awaiting reply -- dropping new request");
+    WARNF("DNAHELPER currently awaiting reply -- dropping new request", request_buffer);
     return 0;
   }
   char buffer[sizeof request_buffer];

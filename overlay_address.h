@@ -106,12 +106,7 @@ struct decode_context{
   int packet_version;
   int encapsulation;
   struct sockaddr_in addr;
-  union{
-    // only valid while decoding
-    int invalid_addresses;
-    // only valid while encoding
-    int encoding_header;
-  };
+  int invalid_addresses;
   struct overlay_frame *please_explain;
   struct subscriber *sender;
   struct subscriber *previous;
